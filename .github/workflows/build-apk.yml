@@ -1,0 +1,115 @@
+
+name: Build Anis UNSS APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Extract Anis UNSS project
+        run: |
+          mkdir -p proj
+
+          ZIP_FILE="Anis_UNSS_fullscreen_adhan_updated.zip"
+
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "ERROR: Project ZIP not found!"
+            find . -maxdepth 3 -iname "*.zip"
+            exit 1
+          fi
+
+          unzip -q "$ZIP_FILE" -d proj
+
+          if [ ! -f proj/package.json ]; then
+            echo "ERROR: package.json missing!"
+            exit 1
+          fi
+
+          if [ ! -f proj/native/android/install-native.sh ]; then
+            echo "ERROR: Native Adhan installer missing!"
+            exit 1
+          fi
+
+          echo "Project extracted successfully"
+
+      - name: Install dependencies
+        working-directory: proj
+        run: npm install
+
+      - name: Add Android platform
+        working-directory: proj
+        run: npx cap add android
+
+      - name: Install native full-screen Adhan
+        working-directory: proj
+        run: |
+          chmod +x native/android/install-native.sh
+          bash native/android/install-native.sh
+
+      - name: Copy application icons
+        working-directory: proj
+        run: |
+          for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            mkdir -p android/app/src/main/res/mipmap-$d
+            cp resources/mipmap-$d/*.png android/app/src/main/res/mipmap-$d/
+          done
+
+          for d in mdpi hdpi xhdpi xxhdpi xxxhdpi nodpi; do
+            mkdir -p android/app/src/main/res/drawable-$d
+            cp resources/drawable-$d/*.png android/app/src/main/res/drawable-$d/
+          done
+
+      - name: Copy notification and Adhan sounds
+        working-directory: proj
+        run: |
+          mkdir -p android/app/src/main/res/raw
+
+          cp resources/sounds/*.wav android/app/src/main/res/raw/
+          cp resources/sounds/adhan.mp3 android/app/src/main/res/raw/adhan.mp3
+
+      - name: Sync Android
+        working-directory: proj
+        run: npx cap sync android
+
+      - name: Verify native Adhan files
+        working-directory: proj
+        run: |
+          test -f android/app/src/main/java/com/anis/unss/AdhanFullScreenActivity.java
+          test -f android/app/src/main/java/com/anis/unss/AdhanAlarmReceiver.java
+          test -f android/app/src/main/java/com/anis/unss/AdhanOverlayPlugin.java
+
+          grep -q "USE_FULL_SCREEN_INTENT" android/app/src/main/AndroidManifest.xml
+
+          echo "Native Adhan verification successful"
+
+      - name: Build APK
+        working-directory: proj/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Anis-UNSS-FullScreen-Adhan-APK
+          path: proj/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
